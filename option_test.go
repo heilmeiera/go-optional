@@ -23,6 +23,15 @@ func TestOptionIsNone(t *testing.T) {
 	}
 }
 
+func TestOptionGet(t *testing.T) {
+	if v, ok := Some("foo").Get(); !ok || v != "foo" {
+		t.Errorf(`Some("foo").Get() = %q, %v, want "foo", true`, v, ok)
+	}
+	if v, ok := None[string]().Get(); ok || v != "" {
+		t.Errorf(`None().Get() = %q, %v, want "", false`, v, ok)
+	}
+}
+
 func TestOptionUnwrap(t *testing.T) {
 	if got := Some("foo").Unwrap(); got != "foo" {
 		t.Errorf(`Some("foo").Unwrap() = %q, want "foo"`, got)
@@ -121,5 +130,46 @@ func TestOptionJSONRoundTrip(t *testing.T) {
 	}
 	if decoded != original {
 		t.Errorf("round trip yielded %+v, want %+v", decoded, original)
+	}
+}
+
+// null resets an option that holds a value, unlike encoding/json's no-op convention for null.
+func TestOptionUnmarshalNullResetsAValue(t *testing.T) {
+	o := Some(5)
+	if err := json.Unmarshal([]byte("null"), &o); err != nil {
+		t.Fatalf("unmarshalling null failed: %v", err)
+	}
+	if o.IsSome() {
+		t.Errorf("unmarshalling null into Some(5) yielded %s, want None[]", o)
+	}
+}
+
+// A field missing from the JSON leaves its option as it was.
+func TestOptionMissingFieldIsLeftUntouched(t *testing.T) {
+	type holder struct {
+		A Option[int] `json:"a"`
+		B Option[int] `json:"b"`
+	}
+	h := holder{A: Some(1)}
+	if err := json.Unmarshal([]byte(`{}`), &h); err != nil {
+		t.Fatalf("unmarshalling failed: %v", err)
+	}
+	if h.A != Some(1) || h.B.IsSome() {
+		t.Errorf("unmarshalling {} into {A: Some(1)} yielded %+v, want A Some[1] and B None[]", h)
+	}
+}
+
+// Some of a value that marshals to null itself comes back as None.
+func TestOptionSomeOfNilComesBackAsNone(t *testing.T) {
+	encoded, err := json.Marshal(Some[*int](nil))
+	if err != nil {
+		t.Fatalf("marshalling failed: %v", err)
+	}
+	var decoded Option[*int]
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshalling failed: %v", err)
+	}
+	if string(encoded) != "null" || decoded.IsSome() {
+		t.Errorf("Some(nil) marshalled to %s and came back as %s, want null and None[]", encoded, decoded)
 	}
 }

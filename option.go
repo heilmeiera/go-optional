@@ -1,6 +1,9 @@
 // Package optional provides Option[T], a generic container that either holds a value (Some) or is
-// empty (None), with JSON support: a None option marshals to null, and null (or a missing field)
-// unmarshals to None.
+// empty (None), with JSON support: a None option marshals to null, and null unmarshals to None. A
+// field missing from the JSON leaves its option untouched, so it is None in a freshly declared value.
+//
+// To leave None fields out when marshalling, tag them omitzero (Go 1.24 or newer); omitempty does not
+// apply to structs and writes null.
 package optional
 
 import (
@@ -37,6 +40,14 @@ func (o Option[T]) IsNone() bool {
 	return !o.ok
 }
 
+// Get returns the contained value and true, or the zero value and false if the option is None: the
+// comma-ok form, for checking and using the value in one step.
+//
+//	if retries, ok := cfg.Retries.Get(); ok && retries > 3 { ... }
+func (o Option[T]) Get() (T, bool) {
+	return o.value, o.ok
+}
+
 // Unwrap returns the contained value; it panics if the option is None. Use UnwrapOr when a
 // fallback value is preferable to a panic.
 func (o Option[T]) Unwrap() T {
@@ -54,22 +65,19 @@ func (o Option[T]) UnwrapOr(fallbackValue T) T {
 	return o.value
 }
 
-// String renders the option as "Some[value]" or "None[]". A contained value implementing
-// fmt.Stringer is rendered via its String method.
+// String renders the option as "Some[value]" or "None[]", the value as %v formats it (so by its
+// String method if it has one).
 func (o Option[T]) String() string {
 	if o.IsNone() {
 		return "None[]"
-	}
-
-	if stringer, ok := any(o.value).(fmt.Stringer); ok {
-		return fmt.Sprintf("Some[%s]", stringer)
 	}
 	return fmt.Sprintf("Some[%v]", o.value)
 }
 
 var jsonNull = []byte("null")
 
-// MarshalJSON encodes the contained value, or null for a None option.
+// MarshalJSON encodes the contained value, or null for a None option. A Some option whose value
+// encodes as null itself (a nil pointer, slice or map) therefore comes back as None.
 func (o Option[T]) MarshalJSON() ([]byte, error) {
 	if o.IsNone() {
 		return jsonNull, nil
@@ -78,7 +86,9 @@ func (o Option[T]) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON decodes null (or an empty input) into a None option, and any other JSON value into
-// a Some option via the regular unmarshalling of T.
+// a Some option via the regular unmarshalling of T. Unlike encoding/json's convention for null, which
+// leaves a value unchanged, null resets an option that holds a value to None: for an option, null
+// means "no value".
 func (o *Option[T]) UnmarshalJSON(b []byte) error {
 	if len(b) == 0 || bytes.Equal(b, jsonNull) {
 		*o = None[T]()
